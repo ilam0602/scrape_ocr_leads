@@ -30,8 +30,8 @@ def preprocess_image_to_remove_watermark(image, output_folder, page_number):
     )
 
     # Save the processed image
-    processed_image_path = os.path.join(output_folder, f"processed_page_{page_number}.png")
-    cv2.imwrite(processed_image_path, watermark_removed)
+    #processed_image_path = os.path.join(output_folder, f"processed_page_{page_number}.png")
+    #cv2.imwrite(processed_image_path, watermark_removed)
 
     return processed_image_path
 
@@ -53,8 +53,8 @@ def extract_text_from_pdf_with_watermark_removal(pdf_path, output_folder="proces
         text += page_text + "\n\n"
 
     # Save the extracted text to a file
-    with open("ocr_output.txt", "w", encoding="utf-8") as ocr_file:
-        ocr_file.write(text)
+    #with open("ocr_output.txt", "w", encoding="utf-8") as ocr_file:
+    #    ocr_file.write(text)
 
     return text
 
@@ -93,8 +93,8 @@ def process_pdf_and_find_damages(pdf_path):
     result = find_damages_and_value(extracted_text)
 
     # Optionally save the result to a text file
-    with open("damages_result.txt", "w", encoding="utf-8") as result_file:
-        result_file.write(result)
+    #with open("damages_result.txt", "w", encoding="utf-8") as result_file:
+        #result_file.write(result)
 
     return result
 
