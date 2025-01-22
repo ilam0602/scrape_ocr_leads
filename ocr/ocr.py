@@ -1,0 +1,100 @@
+import os
+import re
+import numpy as np
+from PyPDF2 import PdfReader
+from pdf2image import convert_from_path
+import pytesseract
+from PIL import Image
+import cv2
+
+def preprocess_image_to_remove_watermark(image, output_folder, page_number):
+    """
+    Preprocess the image to remove lighter watermarks while keeping text,
+    apply thresholding, and then make the text bolder with morphological dilation.
+    Further darken the text to enhance visibility for OCR.
+    """
+    # Convert PIL Image to OpenCV format (grayscale)
+    img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+
+    # Remove lighter shades (e.g., watermark)
+    watermark_removed = np.where(img > 50, 255, img).astype(np.uint8)
+
+    # Apply adaptive thresholding to focus on text
+    adaptive_threshold = cv2.adaptiveThreshold(
+        watermark_removed,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11,
+        2
+    )
+
+    # Save the processed image
+    processed_image_path = os.path.join(output_folder, f"processed_page_{page_number}.png")
+    cv2.imwrite(processed_image_path, watermark_removed)
+
+    return processed_image_path
+
+def extract_text_from_pdf_with_watermark_removal(pdf_path, output_folder="processed_images"):
+    """Extracts text from a PDF by converting pages to images, removing watermarks, and performing OCR."""
+    os.makedirs(output_folder, exist_ok=True)
+
+    pages = convert_from_path(pdf_path, dpi=300)
+    text = ""
+
+    for page_number, page_image in enumerate(pages, start=1):
+        print(f"Processing page {page_number}...")
+
+        # Preprocess (threshold, remove watermark noise, make text bolder)
+        processed_image_path = preprocess_image_to_remove_watermark(page_image, output_folder, page_number)
+
+        # Perform OCR on the preprocessed image
+        page_text = pytesseract.image_to_string(Image.open(processed_image_path))
+        text += page_text + "\n\n"
+
+    # Save the extracted text to a file
+    with open("ocr_output.txt", "w", encoding="utf-8") as ocr_file:
+        ocr_file.write(text)
+
+    return text
+
+def find_damages_and_value(text):
+    """
+    Looks for any sentence where the word 'damages' (case-insensitive) 
+    is followed by a dollar amount. Returns the first such sentence found.
+    """
+    # Replace newlines with spaces to handle multi-line sentences
+    text = text.replace('\n', ' ')
+    
+    # Split text into sentences by common punctuation
+    sentences = re.split(r'[.!?]', text)
+
+    # Regex pattern to match 'damages' followed by a dollar amount
+    damages_dollar_pattern = re.compile(r'\bdamages\b.*?\$[\d,]+(\.\d{2})?', re.IGNORECASE)
+
+    for sentence in sentences:
+        # Check if 'damages' is followed by a dollar amount in the sentence
+        if damages_dollar_pattern.search(sentence):
+            return sentence.strip()
+
+    return "No sentence found where 'damages' is followed by a dollar value."
+
+def process_pdf_and_find_damages(pdf_path):
+    """
+    Main function to process the PDF, extract text, and find damages with values.
+    """
+    if not os.path.exists(pdf_path):
+        raise FileNotFoundError("PDF file not found. Please check the path.")
+
+    print("Extracting text from PDF...")
+    extracted_text = extract_text_from_pdf_with_watermark_removal(pdf_path)
+
+    print("\nSearching for 'damages' and the associated dollar value...")
+    result = find_damages_and_value(extracted_text)
+
+    # Optionally save the result to a text file
+    with open("damages_result.txt", "w", encoding="utf-8") as result_file:
+        result_file.write(result)
+
+    return result
+
