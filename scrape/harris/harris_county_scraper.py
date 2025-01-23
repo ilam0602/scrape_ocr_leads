@@ -9,6 +9,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, timedelta
 import time
 import os
+import glob
 
 
 class HarrisCountyScraper:
@@ -64,62 +65,75 @@ class HarrisCountyScraper:
         search_button.click()
         self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
 
-    def extract_defendant_details(self, download_link):
-        try:
-            defendant_row = self.driver.find_element(
-                By.XPATH,
-                "//td[text()='Defendant']/following-sibling::td/span[contains(@id, 'lblStyle')]"
-            )
-            defendant_details = defendant_row.text.strip().replace('\n', ', ')
-            with open(self.output_file, 'a') as file:
-                file.write(f"{defendant_details}, {download_link}\n")
-            print(f"Extracted and saved defendant details: {defendant_details}, Download Link: {download_link}")
-        except Exception as e:
-            print(f"Error extracting defendant details: {e}")
-
     def scrape_cases(self):
         while True:
+            # Re-locate the cases on the page
             cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
-            for index, case in enumerate(cases):
+            for index in range(len(cases)):
                 try:
+                    # Re-locate the cases again for each iteration
                     cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
                     case = cases[index]
 
+                    # Get the case type description
                     type_desc = case.find_element(By.XPATH, ".//td[6]").text
                     if 'CONTRACT - CONSUMER/COMMERCIAL/DEBT' in type_desc:
                         print('Processing case...')
                         case_link = case.find_element(By.XPATH, ".//a[@class='doclinks']")
                         case_link.click()
 
+                        # Wait for the events table to load
                         self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_gridViewEvents')))
 
+                        # Navigate to the "Parties" page to extract defendant details
+                        parties_link = self.driver.find_element(
+                            By.XPATH,
+                            "//a[@href=\"javascript:__doPostBack('ctl00$ContentPlaceHolder1$gridViewCase','Parties$0')\"]"
+                        )
+                        parties_link.click()
+
+                        self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
+
+                        # Extract the defendant's name
+                        defendant_row = self.driver.find_element(
+                            By.XPATH,
+                            "//td[text()='Defendant']/following-sibling::td/span[contains(@id, 'lblStyle')]"
+                        )
+                        defendant_details = defendant_row.text.strip().replace('\n', ', ')
+                        first_last_name = defendant_details.split(',')[0]  # Assuming "Last, First" format
+                        file_safe_name = first_last_name.replace(' ', '_').replace(',', '')
+                        print(f"Defendant name extracted: {first_last_name}")
+
+                        # Return to the case page
+                        self.driver.back()
+                        self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_gridViewEvents')))
+
+                        # Search for the document to download
                         documents = self.driver.find_elements(By.XPATH, "//table[@class='Nested_ChildGrid']//tr")
-                        document_downloaded = False
-                        download_link = None
                         for doc in documents:
                             doc_desc = doc.find_element(By.XPATH, ".//span[contains(@id, 'lblDocDesc')]").text
                             if 'Plaintiff\'s Original Petition' in doc_desc or 'filing_package' in doc_desc:
                                 download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
-                                download_link = download_element.get_attribute('href')
-                                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc} to {self.download_dir}")
+                                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc}")
                                 download_element.click()
-                                time.sleep(2.4)
-                                document_downloaded = True
+
+                                # Wait for the file to download
+                                time.sleep(5)  # Adjust based on actual download time
+
+                                # Identify the most recent file in the download directory
+                                downloaded_files = glob.glob(f"{self.download_dir}/*")
+                                latest_file = max(downloaded_files, key=os.path.getctime)
+
+                                # Rename the file with the defendant's name
+                                renamed_path = os.path.join(self.download_dir, f"{file_safe_name}.pdf")
+                                os.rename(latest_file, renamed_path)
+                                print(f"File downloaded and renamed to: {renamed_path}")
+
+                                # Save the details to the output file
+                                with open(self.output_file, 'a') as file:
+                                    file.write(f"{defendant_details}, {renamed_path}\n")
+                                print(f"Saved details to output file: {defendant_details}, {renamed_path}")
                                 break
-
-                        if document_downloaded and download_link:
-                            try:
-                                parties_link = self.driver.find_element(
-                                    By.XPATH,
-                                    "//a[@href=\"javascript:__doPostBack('ctl00$ContentPlaceHolder1$gridViewCase','Parties$0')\"]"
-                                )
-                                parties_link.click()
-
-                                self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
-                                self.extract_defendant_details(download_link)
-                                self.driver.back()
-                            except Exception as e:
-                                print(f"Error clicking or returning from Parties link: {e}")
 
                         print('Navigating back to search results...')
                         self.driver.back()
@@ -127,10 +141,12 @@ class HarrisCountyScraper:
 
                 except Exception as e:
                     print(f"Error processing case: {e}")
+                    # Navigate back and refresh case list
                     self.driver.execute_script("window.history.go(-1)")
                     self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
                     continue
 
+            # Check for the "Next" button to paginate
             try:
                 next_button = self.driver.find_element(By.XPATH, "//a[text()='Next']")
                 if next_button.get_attribute('disabled') is None:
@@ -142,10 +158,7 @@ class HarrisCountyScraper:
             except NoSuchElementException:
                 print("No 'Next' button found. Assuming last page reached.")
                 break
-
-    def quit(self):
-        self.driver.quit()
-
+    
 
 # Allow this script to be imported or run standalone
 if __name__ == '__main__':
