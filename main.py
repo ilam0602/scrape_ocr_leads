@@ -25,37 +25,11 @@ def main():
     try:
         # Perform the scraping tasks
         scraper.login()
-        scraper.search_cases(days=1)
+        scraper.search_cases(days=7)
         scraper.scrape_cases()
     finally:
         # Ensure the browser is closed
         scraper.quit()
-
-    # Directory where downloaded files are stored
-    download_dir = "./out/harris/downloaded_docs"
-    print(f"Checking downloaded files in {download_dir}")
-    print(os.listdir(download_dir))  # List all files in the directory
-
-    # Loop through all files in the directory
-    for file_name in os.listdir(download_dir):
-        if file_name.endswith(".pdf"):  # Check for PDF files
-            pdf_path = os.path.join(download_dir, file_name)
-            print(f"\nProcessing OCR for file: {pdf_path}")
-
-            try:
-                result = process_pdf_and_find_damages(pdf_path)
-                print("\n--- Result ---\n")
-                print(result)
-
-                # Save results for each file in a separate text file
-                result_file_path = os.path.join(download_dir, f"{file_name}_damages_result.txt")
-                with open(result_file_path, "w", encoding="utf-8") as result_file:
-                    result_file.write(result)
-                print(f"Saved OCR results to: {result_file_path}")
-            except FileNotFoundError as e:
-                print(f"File not found: {e}")
-            except Exception as e:
-                print(f"Error processing file {file_name}: {e}")
 
 if __name__ == '__main__':
     main()

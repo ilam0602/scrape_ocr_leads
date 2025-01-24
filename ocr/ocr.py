@@ -29,15 +29,24 @@ def preprocess_image_to_remove_watermark(image, output_folder, page_number):
         2
     )
 
-    # Save the processed image
-    #processed_image_path = os.path.join(output_folder, f"processed_page_{page_number}.png")
-    #cv2.imwrite(processed_image_path, watermark_removed)
+    # Save the processed image (COMMENTED OUT by default)
+    # If you want to keep the individual processed images, uncomment below:
+    # processed_image_path = os.path.join(output_folder, f"processed_page_{page_number}.png")
+    # cv2.imwrite(processed_image_path, watermark_removed)
+    
+    # Convert the (currently in-memory) processed image back to PIL format for OCR
+    processed_pil = Image.fromarray(watermark_removed)
 
-    return processed_image_path
+    return processed_pil
 
 def extract_text_from_pdf_with_watermark_removal(pdf_path, output_folder="processed_images"):
-    """Extracts text from a PDF by converting pages to images, removing watermarks, and performing OCR."""
-    os.makedirs(output_folder, exist_ok=True)
+    """
+    Extracts text from a PDF by converting pages to images, removing watermarks,
+    and performing OCR. By default, does NOT keep intermediate files.
+    """
+    # Create output folder (COMMENTED OUT by default)
+    # If you want the processed images to be saved, uncomment this:
+    # os.makedirs(output_folder, exist_ok=True)
 
     pages = convert_from_path(pdf_path, dpi=300)
     text = ""
@@ -46,15 +55,16 @@ def extract_text_from_pdf_with_watermark_removal(pdf_path, output_folder="proces
         print(f"Processing page {page_number}...")
 
         # Preprocess (threshold, remove watermark noise, make text bolder)
-        processed_image_path = preprocess_image_to_remove_watermark(page_image, output_folder, page_number)
+        processed_image = preprocess_image_to_remove_watermark(page_image, output_folder, page_number)
 
         # Perform OCR on the preprocessed image
-        page_text = pytesseract.image_to_string(Image.open(processed_image_path))
+        page_text = pytesseract.image_to_string(processed_image)
         text += page_text + "\n\n"
 
-    # Save the extracted text to a file
-    #with open("ocr_output.txt", "w", encoding="utf-8") as ocr_file:
-    #    ocr_file.write(text)
+    # Save the extracted text to a file (COMMENTED OUT by default)
+    # If you want to keep the full OCR text, uncomment this:
+    # with open("ocr_output.txt", "w", encoding="utf-8") as ocr_file:
+    #     ocr_file.write(text)
 
     return text
 
@@ -82,6 +92,8 @@ def find_damages_and_value(text):
 def process_pdf_and_find_damages(pdf_path):
     """
     Main function to process the PDF, extract text, and find damages with values.
+    By default, removes ALL intermediate and output files, including the original PDF.
+    Uncomment lines if you wish to keep any of them.
     """
     if not os.path.exists(pdf_path):
         raise FileNotFoundError("PDF file not found. Please check the path.")
@@ -92,9 +104,34 @@ def process_pdf_and_find_damages(pdf_path):
     print("\nSearching for 'damages' and the associated dollar value...")
     result = find_damages_and_value(extracted_text)
 
-    # Optionally save the result to a text file
-    #with open("damages_result.txt", "w", encoding="utf-8") as result_file:
-        #result_file.write(result)
+    # Optionally save the result to a text file (COMMENTED OUT by default)
+    # If you want to keep the final search result, uncomment below:
+    # with open("damages_result.txt", "w", encoding="utf-8") as result_file:
+    #     result_file.write(result)
+
+    # Cleanup: Remove the original PDF
+    if os.path.exists(pdf_path):
+        os.remove(pdf_path)
+        print(f"Removed the PDF file: {pdf_path}")
+
+    # Cleanup: Remove any processed images folder if created and if it exists
+    # (Uncomment the "os.makedirs" in extract_text_from_pdf_with_watermark_removal if you used it)
+    if os.path.exists("processed_images"):
+        for file_name in os.listdir("processed_images"):
+            file_path = os.path.join("processed_images", file_name)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+        os.rmdir("processed_images")
+        print("Removed the processed_images folder.")
+
+    # Cleanup: Remove the potential OCR output file
+    if os.path.exists("ocr_output.txt"):
+        os.remove("ocr_output.txt")
+        print("Removed ocr_output.txt.")
+
+    # Cleanup: Remove the potential damages result file
+    if os.path.exists("damages_result.txt"):
+        os.remove("damages_result.txt")
+        print("Removed damages_result.txt.")
 
     return result
-

@@ -9,8 +9,26 @@ from webdriver_manager.chrome import ChromeDriverManager
 from datetime import datetime, timedelta
 import time
 import os
+from ocr.ocr import process_pdf_and_find_damages
 import glob
 
+def append_to_last_line(file_path, text_to_append):
+    """
+    Appends the given text to the last line of the file.
+    If the file is empty, it creates a new line with the text.
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    if lines:
+        # Remove any trailing newline from the last line before appending
+        lines[-1] = lines[-1].rstrip('\n') + text_to_append + '\n'
+    else:
+        # File is empty, so just write the text in a new line
+        lines.append(text_to_append + '\n')
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.writelines(lines)
 
 class HarrisCountyScraper:
     def __init__(self, username, password, download_dir, output_file):
@@ -65,75 +83,109 @@ class HarrisCountyScraper:
         search_button.click()
         self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
 
+    def extract_defendant_details(self):
+        """
+        Extracts defendant details from the 'Parties' screen.
+        Returns the extracted text (defendant_details).
+        """
+        try:
+            defendant_row = self.driver.find_element(
+                By.XPATH,
+                "//td[text()='Defendant']/following-sibling::td/span[contains(@id, 'lblStyle')]"
+            )
+            defendant_details = defendant_row.text.strip().replace('\n', ', ')
+            return defendant_details
+        except Exception as e:
+            print(f"Error extracting defendant details: {e}")
+            return ""
     def scrape_cases(self):
         while True:
-            # Re-locate the cases on the page
             cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
-            for index in range(len(cases)):
+            for index, case in enumerate(cases):
                 try:
-                    # Re-locate the cases again for each iteration
+                    # Re-locate 'cases' for each iteration to avoid stale element issues
                     cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
                     case = cases[index]
 
-                    # Get the case type description
                     type_desc = case.find_element(By.XPATH, ".//td[6]").text
                     if 'CONTRACT - CONSUMER/COMMERCIAL/DEBT' in type_desc:
                         print('Processing case...')
                         case_link = case.find_element(By.XPATH, ".//a[@class='doclinks']")
                         case_link.click()
 
-                        # Wait for the events table to load
                         self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_gridViewEvents')))
 
-                        # Navigate to the "Parties" page to extract defendant details
-                        parties_link = self.driver.find_element(
-                            By.XPATH,
-                            "//a[@href=\"javascript:__doPostBack('ctl00$ContentPlaceHolder1$gridViewCase','Parties$0')\"]"
-                        )
-                        parties_link.click()
-
-                        self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
-
-                        # Extract the defendant's name
-                        defendant_row = self.driver.find_element(
-                            By.XPATH,
-                            "//td[text()='Defendant']/following-sibling::td/span[contains(@id, 'lblStyle')]"
-                        )
-                        defendant_details = defendant_row.text.strip().replace('\n', ', ')
-                        first_last_name = defendant_details.split(',')[0]  # Assuming "Last, First" format
-                        file_safe_name = first_last_name.replace(' ', '_').replace(',', '')
-                        print(f"Defendant name extracted: {first_last_name}")
-
-                        # Return to the case page
-                        self.driver.back()
-                        self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_gridViewEvents')))
-
-                        # Search for the document to download
                         documents = self.driver.find_elements(By.XPATH, "//table[@class='Nested_ChildGrid']//tr")
+                        document_downloaded = False
+                        download_link = None
+
                         for doc in documents:
                             doc_desc = doc.find_element(By.XPATH, ".//span[contains(@id, 'lblDocDesc')]").text
                             if 'Plaintiff\'s Original Petition' in doc_desc or 'filing_package' in doc_desc:
                                 download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
-                                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc}")
+                                download_link = download_element.get_attribute('href')
+                                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc} to {self.download_dir}")
                                 download_element.click()
-
-                                # Wait for the file to download
-                                time.sleep(5)  # Adjust based on actual download time
-
-                                # Identify the most recent file in the download directory
-                                downloaded_files = glob.glob(f"{self.download_dir}/*")
-                                latest_file = max(downloaded_files, key=os.path.getctime)
-
-                                # Rename the file with the defendant's name
-                                renamed_path = os.path.join(self.download_dir, f"{file_safe_name}.pdf")
-                                os.rename(latest_file, renamed_path)
-                                print(f"File downloaded and renamed to: {renamed_path}")
-
-                                # Save the details to the output file
-                                with open(self.output_file, 'a') as file:
-                                    file.write(f"{defendant_details}, {renamed_path}\n")
-                                print(f"Saved details to output file: {defendant_details}, {renamed_path}")
+                                time.sleep(2.4)  # brief wait for the download to start
+                                document_downloaded = True
                                 break
+
+                        if document_downloaded and download_link:
+                            # Short initial wait
+                            time.sleep(2)
+
+                            # Now poll for up to 300 seconds in 5-second intervals
+                            timeout_seconds = 300
+                            poll_interval = 5
+                            start_time = time.time()
+
+                            pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
+                            while not pdf_files and (time.time() - start_time < timeout_seconds):
+                                time.sleep(poll_interval)
+                                pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
+
+                            # ---------------------------------------
+                            # Now handle 'Parties' link regardless of whether we found a PDF
+                            # ---------------------------------------
+                            try:
+                                parties_link = self.driver.find_element(
+                                    By.XPATH,
+                                    "//a[@href=\"javascript:__doPostBack('ctl00$ContentPlaceHolder1$gridViewCase','Parties$0')\"]"
+                                )
+                                parties_link.click()
+
+                                self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
+                                defendant_details = self.extract_defendant_details()
+                                self.driver.back()
+
+                                # 1) Write the defendant details and download link to the output file immediately
+                                with open(self.output_file, 'a', encoding='utf-8') as file:
+                                    file.write(f"{defendant_details}, {download_link}\n")
+
+                            except Exception as e:
+                                print(f"Error clicking or returning from Parties link: {e}")
+                                defendant_details = ""
+
+                            # -------------------------------------------------------
+                            # 2) If we found a PDF in the download directory, pick the most recent one
+                            # -------------------------------------------------------
+                            if pdf_files:
+                                most_recent_pdf = max(pdf_files, key=os.path.getctime)
+
+                                # ---------------------------------------------------
+                                # 3) Perform OCR on that PDF file
+                                # ---------------------------------------------------
+                                try:
+                                    damages_result = process_pdf_and_find_damages(most_recent_pdf)
+                                    # Instead of printing, append the damages result to the last line of output_file
+                                    if damages_result:
+                                        append_to_last_line(self.output_file, f", {damages_result}")
+                                except Exception as ocr_err:
+                                    print(f"Error performing OCR on {most_recent_pdf}: {ocr_err}")
+                            else:
+                                print(f"No PDF found in the download directory after waiting up to {timeout_seconds} seconds.")
+                        else:
+                            print('Document matching criteria not found or not downloaded.')
 
                         print('Navigating back to search results...')
                         self.driver.back()
@@ -141,12 +193,12 @@ class HarrisCountyScraper:
 
                 except Exception as e:
                     print(f"Error processing case: {e}")
-                    # Navigate back and refresh case list
+                    # Go back and continue
                     self.driver.execute_script("window.history.go(-1)")
                     self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
                     continue
 
-            # Check for the "Next" button to paginate
+            # Attempt to move to the next page
             try:
                 next_button = self.driver.find_element(By.XPATH, "//a[text()='Next']")
                 if next_button.get_attribute('disabled') is None:
@@ -159,6 +211,10 @@ class HarrisCountyScraper:
                 print("No 'Next' button found. Assuming last page reached.")
                 break
     
+
+
+    def quit(self):
+        self.driver.quit()
 
 # Allow this script to be imported or run standalone
 if __name__ == '__main__':
@@ -174,4 +230,3 @@ if __name__ == '__main__':
         scraper.scrape_cases()
     finally:
         scraper.quit()
-
