@@ -84,28 +84,24 @@ class HarrisCountyScraper:
         search_button.click()
         self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
 
-    def extract_defendant_details(self):
+
+    def extract_defendant_and_plaintiff_details(self):
         """
-        Extracts defendant details from the 'Parties' screen.
+        Extracts defendant details and plaintiff details from the 'Parties' screen.
         Returns the extracted text (defendant_details) with specific formatting:
-        - The portion of text before any line starting with a digit is joined by a comma (', ') and wrapped in quotes.
-        - The portion of text from the line starting with a digit onward is joined by a space (' ') and wrapped in quotes.
+        - Defendant: "{defendant_name}", "{defendant_address}"
+        - Plaintiff and Attorney Info: "{plaintiff_name}", "{plaintiff_attorney_info}"
         """
         try:
-            # Locate the defendant element
+            # Extract defendant details
             defendant_row = self.driver.find_element(
                 By.XPATH,
                 "//td[text()='Defendant']/following-sibling::td/span[contains(@id, 'lblStyle')]"
             )
-
-            # Get the raw text (may contain newlines)
             raw_text = defendant_row.text.strip()
-
-            # Split on new lines
             lines = raw_text.split('\n')
 
-            # Identify where the address starts (assuming it starts with one or more digits)
-            # Example: "12345 sesame street" => starts with digits
+            # Detect the address starting line (assumes it starts with digits)
             address_idx = None
             for i, line in enumerate(lines):
                 if re.match(r'^\d+', line.strip()):
@@ -113,31 +109,44 @@ class HarrisCountyScraper:
                     break
 
             if address_idx is not None:
-                # Everything up to address_idx is "name lines"
                 name_lines = lines[:address_idx]
-                # Everything from address_idx onward is "address lines"
                 address_lines = lines[address_idx:]
-
-                # Join name lines with a comma and a space
                 name_str = ', '.join(name_lines)
-                # Join address lines with a space
                 address_str = ' '.join(address_lines)
-
-                # Final formatted string:
-                # "jim jones, c/o lacma", "12345 sesame street made up"
                 defendant_details = f'"{name_str}", "{address_str}"'
             else:
-                # If we cannot detect a line starting with a digit,
-                # just join everything by a comma. Adjust as you see fit.
                 defendant_details = f'"{", ".join(lines)}"'
 
-            print(f'defendant_details: {defendant_details}')
-            return defendant_details
+            # Extract plaintiff and attorney details
+            plaintiff_row = self.driver.find_element(
+                By.XPATH,
+                "//td[text()='Plaintiff']/following-sibling::td/span[contains(@id, 'lblStyle')]"
+            )
+            plaintiff_name = plaintiff_row.text.strip()
+
+            plaintiff_attorney_row = self.driver.find_element(
+                By.XPATH,
+                "//td[text()='Plaintiff']/following-sibling::td[2]//span[contains(@id, 'lblStyle')]"
+            )
+
+            plaintiff_attorney_raw = plaintiff_attorney_row.text.strip()
+            plaintiff_attorney_lines = plaintiff_attorney_raw.split('<br>')
+
+            # Clean and join attorney details
+            plaintiff_attorney_info = ' '.join(
+                [re.sub(r'\s+', ' ', line.strip()) for line in plaintiff_attorney_lines]
+            )
+
+            # Combine everything into the desired format
+            combined_details = f'{defendant_details}, "{plaintiff_name}", "{plaintiff_attorney_info}"'
+
+            print(f'Combined details: {combined_details}')
+            return combined_details
 
         except Exception as e:
-            print(f"Error extracting defendant details: {e}")
+            print(f"Error extracting details: {e}")
             return ""
- 
+    
     def scrape_cases(self):
         while True:
             cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
@@ -195,7 +204,7 @@ class HarrisCountyScraper:
                                 parties_link.click()
 
                                 self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
-                                defendant_details = self.extract_defendant_details()
+                                defendant_details = self.extract_defendant_and_plaintiff_details()
                                 self.driver.back()
 
                                 # 1) Write the defendant details and download link to the output file immediately
