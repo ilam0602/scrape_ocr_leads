@@ -6,3 +6,5 @@ out/*
 # Ignore Python cache files
 __pycache__/
 
+#ignore downloaded docs
+ocr/example_docs

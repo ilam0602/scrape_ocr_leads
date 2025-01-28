@@ -6,6 +6,35 @@ from pdf2image import convert_from_path
 import pytesseract
 from PIL import Image
 import cv2
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+genai.configure()
+load_dotenv()
+google_api_key = os.getenv("GOOGLE_API_KEY")
+print(google_api_key)
+
+def extract_damages_with_gemini(text):
+    # Configure the Gemini API client
+    genai.configure(api_key=google_api_key)
+
+    # Initialize the GenerativeModel with the specified model name
+    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+
+    # Define the prompt for the Gemini model
+    prompt = (
+        "Analyze the following text and extract the damages the defendant is getting sued for. "
+        "Return the sentence where this is found and "
+        "otherwise, indicate that no such sentences were found.\n\n"
+        f"Text:\n{text}"
+    )
+
+    # Generate a response using the Gemini model
+    response = model.generate_content(prompt)
+
+    # Extract and return the model's output
+    return response.text
+
 
 def preprocess_image_to_remove_watermark(image, output_folder, page_number):
     """
@@ -102,7 +131,8 @@ def process_pdf_and_find_damages(pdf_path):
     extracted_text = extract_text_from_pdf_with_watermark_removal(pdf_path)
 
     print("\nSearching for 'damages' and the associated dollar value...")
-    result = find_damages_and_value(extracted_text)
+    # result = find_damages_and_value(extracted_text)
+    result = extract_damages_with_gemini(extracted_text)
 
     # Optionally save the result to a text file (COMMENTED OUT by default)
     # If you want to keep the final search result, uncomment below:
@@ -135,3 +165,6 @@ def process_pdf_and_find_damages(pdf_path):
         print("Removed damages_result.txt.")
 
     return result
+
+# comment/uncomment to test
+# print(process_pdf_and_find_damages('/Users/isaaclam/guardian/marketing_leads_project/main/ocr/example_docs/sample.pdf'))
