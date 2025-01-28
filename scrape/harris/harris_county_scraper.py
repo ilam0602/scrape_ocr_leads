@@ -11,6 +11,7 @@ import time
 import os
 from ocr.ocr import process_pdf_and_find_damages
 import glob
+import re
 
 def append_to_last_line(file_path, text_to_append):
     """
@@ -86,18 +87,57 @@ class HarrisCountyScraper:
     def extract_defendant_details(self):
         """
         Extracts defendant details from the 'Parties' screen.
-        Returns the extracted text (defendant_details).
+        Returns the extracted text (defendant_details) with specific formatting:
+        - The portion of text before any line starting with a digit is joined by a comma (', ') and wrapped in quotes.
+        - The portion of text from the line starting with a digit onward is joined by a space (' ') and wrapped in quotes.
         """
         try:
+            # Locate the defendant element
             defendant_row = self.driver.find_element(
                 By.XPATH,
                 "//td[text()='Defendant']/following-sibling::td/span[contains(@id, 'lblStyle')]"
             )
-            defendant_details = defendant_row.text.strip().replace('\n', ', ')
+
+            # Get the raw text (may contain newlines)
+            raw_text = defendant_row.text.strip()
+
+            # Split on new lines
+            lines = raw_text.split('\n')
+
+            # Identify where the address starts (assuming it starts with one or more digits)
+            # Example: "12345 sesame street" => starts with digits
+            address_idx = None
+            for i, line in enumerate(lines):
+                if re.match(r'^\d+', line.strip()):
+                    address_idx = i
+                    break
+
+            if address_idx is not None:
+                # Everything up to address_idx is "name lines"
+                name_lines = lines[:address_idx]
+                # Everything from address_idx onward is "address lines"
+                address_lines = lines[address_idx:]
+
+                # Join name lines with a comma and a space
+                name_str = ', '.join(name_lines)
+                # Join address lines with a space
+                address_str = ' '.join(address_lines)
+
+                # Final formatted string:
+                # "jim jones, c/o lacma", "12345 sesame street made up"
+                defendant_details = f'"{name_str}", "{address_str}"'
+            else:
+                # If we cannot detect a line starting with a digit,
+                # just join everything by a comma. Adjust as you see fit.
+                defendant_details = f'"{", ".join(lines)}"'
+
+            print(f'defendant_details: {defendant_details}')
             return defendant_details
+
         except Exception as e:
             print(f"Error extracting defendant details: {e}")
             return ""
+ 
     def scrape_cases(self):
         while True:
             cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
@@ -160,7 +200,7 @@ class HarrisCountyScraper:
 
                                 # 1) Write the defendant details and download link to the output file immediately
                                 with open(self.output_file, 'a', encoding='utf-8') as file:
-                                    file.write(f"{defendant_details}, {download_link}\n")
+                                    file.write(f"{defendant_details}, \"{download_link}\"\n")
 
                             except Exception as e:
                                 print(f"Error clicking or returning from Parties link: {e}")

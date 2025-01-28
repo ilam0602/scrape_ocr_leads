@@ -24,7 +24,7 @@ def extract_damages_with_gemini(text):
     # Define the prompt for the Gemini model
     prompt = (
         "Analyze the following text and extract the damages the defendant is getting sued for. "
-        "Return the sentence where this is found and "
+        "Respond with only the sentence where this is found and "
         "otherwise, indicate that no such sentences were found.\n\n"
         f"Text:\n{text}"
     )
@@ -33,7 +33,11 @@ def extract_damages_with_gemini(text):
     response = model.generate_content(prompt)
 
     # Extract and return the model's output
-    return response.text
+    text = response.text.replace('"', '')
+    text = text.replace('\n', ' ')
+
+    print('text:', text)
+    return f'\"{text}\"'
 
 
 def preprocess_image_to_remove_watermark(image, output_folder, page_number):
