@@ -8,26 +8,54 @@ from PIL import Image
 import cv2
 import google.generativeai as genai
 from dotenv import load_dotenv
+import time
+import functools
+
+def retry_on_429(max_retries=3, wait_seconds=60):
+    def decorator_retry(func):
+        @functools.wraps(func)
+        def wrapper_retry(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    retries += 1
+                    print(f'{e} retrying {retries}')
+                    if retries < max_retries:
+                        print(f"429 error encountered. Retrying in {wait_seconds} seconds... (Attempt {retries}/{max_retries})")
+                        time.sleep(wait_seconds)
+                    else:
+                        print("Max retries reached. Raising exception.")
+                        raise
+        return wrapper_retry
+    return decorator_retry
 
 genai.configure()
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
-print(google_api_key)
+# upper_limit = 66586
+upper_limit = 66586//4
 
+@retry_on_429(max_retries=3, wait_seconds=60)
 def extract_damages_with_gemini(text):
     # Configure the Gemini API client
     genai.configure(api_key=google_api_key)
 
     # Initialize the GenerativeModel with the specified model name
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    if len(text) > upper_limit:
+        text = text[:upper_limit]
 
     # Define the prompt for the Gemini model
     prompt = (
         "Analyze the following text and extract the damages the defendant is getting sued for." 
         "There might be multiple sentences that have dollar amounts and describe a general or specific type of damage." 
         "Make sure to find the specific value with the total the Defendant owes."
+        "Since this was extracted using ocr, there might be some extra/missing spaces and characters, "
+        "please clean up these mistakes too as best you can in the sentence you are returning"
         "Respond with only the sentence where this is found and "
-        "otherwise, indicate that no such sentences were found.\n"
+        "otherwise, indicate that no such sentences were found.\n\n"
         f"Text:\n{text}"
     )
 
@@ -37,20 +65,26 @@ def extract_damages_with_gemini(text):
     # Extract and return the model's output
     text = response.text.replace('"', '')
     text = text.replace('\n', ' ')
+    # print('text:', text)
 
     return f'\"{text}\"'
 
+@retry_on_429(max_retries=3, wait_seconds=60)
 def extract_court_names_with_gemini(text):
     # Configure the Gemini API client
     genai.configure(api_key=google_api_key)
 
     # Initialize the GenerativeModel with the specified model name
     model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    if len(text) > upper_limit:
+        text = text[:upper_limit]
 
     # Define the prompt for the Gemini model
     prompt = (
-        "Analyze the following text and extract the court name"
-        "Respond in the following format: Harris County - County Civil Court at Law No. [COURT NUMBER]"
+        "Analyze the following text and extract the court number that is in the format"
+        "County Civil Court at Law No. [court number]. The text is ocr'ed so there might be some missing/additional characters or spaces."
+        "Grab the first instance where you find the court number. You do not need to read the entire text."
+        "Respond in the following format: Harris County - County Civil Court at Law No. [court number] replacing the braces as well"
         f"Text:\n{text}"
     )
 
@@ -61,7 +95,7 @@ def extract_court_names_with_gemini(text):
     text = response.text.replace('"', '')
     text = text.replace('\n', ' ')
 
-    print('text:', text)
+    # print('text:', text)
     return f'\"{text}\"'
 
 def preprocess_image_to_remove_watermark(image, output_folder, page_number):

@@ -141,7 +141,7 @@ class HarrisCountyScraper:
             combined_details = f'{defendant_details}, "{plaintiff_name}", "{plaintiff_attorney_info}"'
 
             print(f'Combined details: {combined_details}')
-            return combined_details
+            return combined_details.replace("\n", "")
 
         except Exception as e:
             print(f"Error extracting details: {e}")
