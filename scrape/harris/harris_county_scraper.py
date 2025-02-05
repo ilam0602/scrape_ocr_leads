@@ -1,3 +1,11 @@
+import glob
+import os
+import re
+import time
+import shutil
+import requests
+from datetime import datetime, timedelta
+
 from selenium.common.exceptions import NoSuchElementException
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -6,14 +14,12 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
-from datetime import datetime, timedelta
-import time
-import os
-from ocr.ocr import process_pdf_and_find_damages
-import glob
-import re
-import requests
 
+from ocr.ocr import process_pdf_and_find_damages
+
+# -----------------------
+# Utility function
+# -----------------------
 def append_to_last_line(file_path, text_to_append):
     """
     Appends the given text to the last line of the file.
@@ -32,6 +38,9 @@ def append_to_last_line(file_path, text_to_append):
     with open(file_path, 'w', encoding='utf-8') as f:
         f.writelines(lines)
 
+# -----------------------
+# HarrisCountyScraper Class
+# -----------------------
 class HarrisCountyScraper:
     def __init__(self, username, password, download_dir, output_file):
         self.username = username
@@ -57,6 +66,42 @@ class HarrisCountyScraper:
         chrome_options.add_experimental_option('prefs', prefs)
         self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
         self.wait = WebDriverWait(self.driver, 10)
+
+        # Configurable wait variables for downloads
+        self.download_wait_timeout = 300  # seconds
+        self.download_poll_interval = 5   # seconds
+
+    def wait_until_download_dir_empty(self, timeout=None, poll_interval=None):
+        """
+        Wait until the download directory is empty (i.e. contains no PDF files).
+        If the directory is still not empty after the timeout period, delete everything in the folder.
+        
+        Returns True once the directory is empty.
+        """
+        if timeout is None:
+            timeout = self.download_wait_timeout
+        if poll_interval is None:
+            poll_interval = self.download_poll_interval
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
+            if not pdf_files:
+                return True
+            time.sleep(poll_interval)
+
+        # Timeout reached: delete all files and folders in the download directory.
+        for filename in os.listdir(self.download_dir):
+            file_path = os.path.join(self.download_dir, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)  # remove the file or link
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)  # remove the directory and its contents
+            except Exception as e:
+                print(f"Failed to delete {file_path}. Reason: {e}")
+
+        return True
 
     def login(self):
         self.driver.get(
@@ -84,7 +129,6 @@ class HarrisCountyScraper:
         search_button = self.driver.find_element(By.ID, 'ctl00_ContentPlaceHolder1_btnSearchCase')
         search_button.click()
         self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
-
 
     def extract_defendant_and_plaintiff_details(self):
         """
@@ -151,6 +195,10 @@ class HarrisCountyScraper:
     def scrape_cases(self):
         processed_cases = set()
         while True:
+            # Ensure the download directory is empty before processing the next case
+            print("Ensuring download directory is empty before processing the next case...")
+            self.wait_until_download_dir_empty()
+
             # Refresh the list of cases on the current results page
             cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
             
@@ -268,12 +316,10 @@ class HarrisCountyScraper:
                     # After downloading, wait for the PDF to appear
                     if document_downloaded and download_link:
                         time.sleep(2)
-                        timeout_seconds = 300
-                        poll_interval = 5
                         start_time = time.time()
                         pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
-                        while not pdf_files and (time.time() - start_time < timeout_seconds):
-                            time.sleep(poll_interval)
+                        while not pdf_files and (time.time() - start_time < self.download_wait_timeout):
+                            time.sleep(self.download_poll_interval)
                             pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
 
                         # Click the Parties link to extract defendant/plaintiff details
@@ -302,7 +348,7 @@ class HarrisCountyScraper:
                             except Exception as ocr_err:
                                 print(f"Error performing OCR on {most_recent_pdf}: {ocr_err}")
                         else:
-                            print(f"No PDF found in the download directory after waiting up to {timeout_seconds} seconds.")
+                            print(f"No PDF found in the download directory after waiting up to {self.download_wait_timeout} seconds.")
                     else:
                         print("Document was not downloaded successfully.")
                 else:
@@ -312,7 +358,6 @@ class HarrisCountyScraper:
                 processed_cases.add(case_number)
                 
                 # Navigate back to the search results page if not already there.
-                # (The details page should have been left already; if not, we force a back.)
                 if "ctl00_ContentPlaceHolder1_ListViewCases_itemContainer" not in self.driver.page_source:
                     print('Navigating back to search results...')
                     self.driver.back()
@@ -326,13 +371,14 @@ class HarrisCountyScraper:
                     (By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')
                 ))
                 continue
-            # At this point the loop will refresh the list and process the next unprocessed case.
+            # The loop will now refresh the case list and process the next unprocessed case.
  
-
     def quit(self):
         self.driver.quit()
 
-# Allow this script to be imported or run standalone
+# -----------------------
+# Main execution (if run standalone)
+# -----------------------
 if __name__ == '__main__':
     scraper = HarrisCountyScraper(
         username='temp_user',

@@ -43,7 +43,9 @@ def extract_damages_with_gemini(text):
     genai.configure(api_key=google_api_key)
 
     # Initialize the GenerativeModel with the specified model name
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    # model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
+    print(model.model_name)
     if len(text) > upper_limit:
         text = text[:upper_limit]
 
@@ -77,7 +79,8 @@ def extract_court_names_with_gemini(text):
     genai.configure(api_key=google_api_key)
 
     # Initialize the GenerativeModel with the specified model name
-    model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    # model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+    model = genai.GenerativeModel(model_name="gemini-2.0-flash")
     if len(text) > upper_limit:
         text = text[:upper_limit]
 
@@ -101,7 +104,7 @@ def extract_court_names_with_gemini(text):
     text = response.text.replace('"', '')
     text = text.replace('\n', ' ')
 
-    return f'\"{text}\"'
+    return f'\"{text.strip()} \"'
 
 def preprocess_image_to_remove_watermark(image, output_folder, page_number):
     """
