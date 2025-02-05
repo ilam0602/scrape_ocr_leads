@@ -8,3 +8,5 @@ __pycache__/
 
 #ignore downloaded docs
 ocr/example_docs
+
+test/
