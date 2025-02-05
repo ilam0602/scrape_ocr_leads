@@ -12,6 +12,7 @@ import os
 from ocr.ocr import process_pdf_and_find_damages
 import glob
 import re
+import requests
 
 def append_to_last_line(file_path, text_to_append):
     """
@@ -146,121 +147,187 @@ class HarrisCountyScraper:
         except Exception as e:
             print(f"Error extracting details: {e}")
             return ""
-    
+
     def scrape_cases(self):
+        processed_cases = set()
         while True:
+            # Refresh the list of cases on the current results page
             cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
-            for index, case in enumerate(cases):
+            
+            # Build a list of unprocessed cases (as tuples of (case_element, case_number))
+            unprocessed_cases = []
+            for case in cases:
                 try:
-                    # Re-locate 'cases' for each iteration to avoid stale element issues
-                    cases = self.driver.find_elements(By.XPATH, "//tr[contains(@class, 'even') or contains(@class, 'odd')]")
-                    case = cases[index]
-
-                    type_desc = case.find_element(By.XPATH, ".//td[6]").text
-                    if 'CONTRACT - CONSUMER/COMMERCIAL/DEBT' in type_desc:
-                        print('Processing case...')
-                        case_link = case.find_element(By.XPATH, ".//a[@class='doclinks']")
-                        case_link.click()
-
-                        self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_gridViewEvents')))
-
-                        documents = self.driver.find_elements(By.XPATH, "//table[@class='Nested_ChildGrid']//tr")
-                        document_downloaded = False
-                        download_link = None
-
-                        for doc in documents:
-                            doc_desc = doc.find_element(By.XPATH, ".//span[contains(@id, 'lblDocDesc')]").text
-                            if 'Plaintiff\'s Original Petition' in doc_desc or 'filing_package' in doc_desc:
-                                download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
-                                download_link = download_element.get_attribute('href')
-                                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc} to {self.download_dir}")
-                                download_element.click()
-                                time.sleep(2.4)  # brief wait for the download to start
-                                document_downloaded = True
-                                break
-
-                        if document_downloaded and download_link:
-                            # Short initial wait
-                            time.sleep(2)
-
-                            # Now poll for up to 300 seconds in 5-second intervals
-                            timeout_seconds = 300
-                            poll_interval = 5
-                            start_time = time.time()
-
-                            pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
-                            while not pdf_files and (time.time() - start_time < timeout_seconds):
-                                time.sleep(poll_interval)
-                                pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
-
-                            # ---------------------------------------
-                            # Now handle 'Parties' link regardless of whether we found a PDF
-                            # ---------------------------------------
-                            try:
-                                parties_link = self.driver.find_element(
-                                    By.XPATH,
-                                    "//a[@href=\"javascript:__doPostBack('ctl00$ContentPlaceHolder1$gridViewCase','Parties$0')\"]"
-                                )
-                                parties_link.click()
-
-                                self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
-                                defendant_details = self.extract_defendant_and_plaintiff_details()
-                                self.driver.back()
-
-                                # 1) Write the defendant details and download link to the output file immediately
-                                with open(self.output_file, 'a', encoding='utf-8') as file:
-                                    file.write(f"{defendant_details}, \"{download_link}\"\n")
-
-                            except Exception as e:
-                                print(f"Error clicking or returning from Parties link: {e}")
-                                defendant_details = ""
-
-                            # -------------------------------------------------------
-                            # 2) If we found a PDF in the download directory, pick the most recent one
-                            # -------------------------------------------------------
-                            if pdf_files:
-                                most_recent_pdf = max(pdf_files, key=os.path.getctime)
-
-                                # ---------------------------------------------------
-                                # 3) Perform OCR on that PDF file
-                                # ---------------------------------------------------
-                                try:
-                                    damages_result = process_pdf_and_find_damages(most_recent_pdf)
-                                    # Instead of printing, append the damages result to the last line of output_file
-                                    if damages_result:
-                                        append_to_last_line(self.output_file, f", {damages_result}")
-                                except Exception as ocr_err:
-                                    print(f"Error performing OCR on {most_recent_pdf}: {ocr_err}")
-                            else:
-                                print(f"No PDF found in the download directory after waiting up to {timeout_seconds} seconds.")
-                        else:
-                            print('Document matching criteria not found or not downloaded.')
-
-                        print('Navigating back to search results...')
-                        self.driver.back()
-                        self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
-
-                except Exception as e:
-                    print(f"Error processing case: {e}")
-                    # Go back and continue
-                    self.driver.execute_script("window.history.go(-1)")
-                    self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
-                    continue
-
-            # Attempt to move to the next page
-            try:
-                next_button = self.driver.find_element(By.XPATH, "//a[text()='Next']")
-                if next_button.get_attribute('disabled') is None:
-                    next_button.click()
-                    self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')))
-                else:
-                    print("Reached the last page.")
+                    link_element = case.find_element(By.XPATH, ".//a[@class='doclinks']")
+                    case_number = link_element.text.strip()
+                except NoSuchElementException:
+                    case_number = "unknown_case_number"
+                if case_number not in processed_cases:
+                    unprocessed_cases.append((case, case_number))
+            
+            if not unprocessed_cases:
+                # No unprocessed cases on the current page; check for a Next button
+                try:
+                    next_button = self.driver.find_element(By.XPATH, "//a[text()='Next']")
+                    if next_button.get_attribute('disabled') is None:
+                        next_button.click()
+                        self.wait.until(EC.presence_of_element_located(
+                            (By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')
+                        ))
+                        continue
+                    else:
+                        print("Reached the last page.")
+                        break
+                except NoSuchElementException:
+                    print("No 'Next' button found. Assuming last page reached.")
                     break
-            except NoSuchElementException:
-                print("No 'Next' button found. Assuming last page reached.")
-                break
-    
 
+            # Always process the first unprocessed case
+            case, case_number = unprocessed_cases[0]
+            try:
+                # (Re)extract the case number to be sure
+                try:
+                    link_element = case.find_element(By.XPATH, ".//a[@class='doclinks']")
+                    case_number = link_element.text.strip()
+                except NoSuchElementException:
+                    case_number = "unknown_case_number"
+
+                # Check case type (assuming it's in the 6th column)
+                type_desc = case.find_element(By.XPATH, ".//td[6]").text
+                if 'CONTRACT - CONSUMER/COMMERCIAL/DEBT' in type_desc:
+                    print(f'Processing case number: {case_number}...')
+
+                    # Click the case to view its details
+                    case_link = case.find_element(By.XPATH, ".//a[@class='doclinks']")
+                    case_link.click()
+                    self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_gridViewEvents')))
+
+                    # Grab all documents from the "Events" (Nested_ChildGrid)
+                    documents = self.driver.find_elements(By.XPATH, "//table[@class='Nested_ChildGrid']//tr")
+                    document_downloaded = False
+                    download_link = None
+                    doc_titles = []
+
+                    # First, try to find a document that matches your criteria
+                    for doc in documents:
+                        doc_desc = doc.find_element(By.XPATH, ".//span[contains(@id, 'lblDocDesc')]").text
+                        doc_titles.append(doc_desc)
+                        doc_desc_cleaned = doc_desc.replace(" ", "").replace("'", "").lower()
+                        if ("plaintiffsoriginalpetition" in doc_desc_cleaned or 
+                            "filing_package" in doc_desc_cleaned):
+                            download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
+                            download_link = download_element.get_attribute('href')
+                            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc} to {self.download_dir}")
+                            download_element.click()
+                            time.sleep(2.4)  # Pause for download to initiate
+                            document_downloaded = True
+                            break
+
+                    # If no document matched the criteria, choose the largest document by file size
+                    if not document_downloaded:
+                        print('Document matching criteria not found; attempting to download the largest available document.')
+                        no_docs_path = '/Users/isaaclam/guardian/marketing_leads_project/main/out/harris/cases_with_no_matching_docs.txt'
+                        with open(no_docs_path, 'a', encoding='utf-8') as no_docs_file:
+                            doc_titles_str = " | ".join(doc_titles)
+                            print(f'Adding case_number: {case_number} to no-match log.')
+                            no_docs_file.write(f"{doc_titles_str}, case_number: {case_number}\n")
+                        
+                        # Create a requests.Session and add Selenium cookies so that HEAD requests are authenticated
+                        session = requests.Session()
+                        for cookie in self.driver.get_cookies():
+                            session.cookies.set(cookie['name'], cookie['value'])
+                        
+                        largest_size = 0
+                        largest_doc = None
+                        for doc in documents:
+                            try:
+                                download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
+                                link = download_element.get_attribute('href')
+                                response = session.head(link, allow_redirects=True, timeout=10)
+                                if response.status_code == 200:
+                                    content_length = response.headers.get("Content-Length")
+                                    if content_length is not None:
+                                        size = int(content_length)
+                                        if size > largest_size:
+                                            largest_size = size
+                                            largest_doc = doc
+                                else:
+                                    print(f"HEAD request for {link} returned status code {response.status_code}")
+                            except Exception as e:
+                                print(f"Error processing document for size: {e}")
+                        if largest_doc is not None:
+                            download_element = largest_doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
+                            download_link = download_element.get_attribute('href')
+                            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading largest document (size: {largest_size} bytes) to {self.download_dir}")
+                            download_element.click()
+                            time.sleep(2.4)  # Pause for download
+                            document_downloaded = True
+                        else:
+                            print("No documents available for download.")
+
+                    # After downloading, wait for the PDF to appear
+                    if document_downloaded and download_link:
+                        time.sleep(2)
+                        timeout_seconds = 300
+                        poll_interval = 5
+                        start_time = time.time()
+                        pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
+                        while not pdf_files and (time.time() - start_time < timeout_seconds):
+                            time.sleep(poll_interval)
+                            pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
+
+                        # Click the Parties link to extract defendant/plaintiff details
+                        try:
+                            parties_link = self.driver.find_element(
+                                By.XPATH, 
+                                "//a[@href=\"javascript:__doPostBack('ctl00$ContentPlaceHolder1$gridViewCase','Parties$0')\"]"
+                            )
+                            parties_link.click()
+                            self.wait.until(EC.presence_of_element_located((By.ID, 'ctl00_ContentPlaceHolder1_GridViewParties')))
+                            defendant_details = self.extract_defendant_and_plaintiff_details()
+                            self.driver.back()
+                            with open(self.output_file, 'a', encoding='utf-8') as file:
+                                file.write(f"{defendant_details}, \"{download_link}\"\n")
+                        except Exception as e:
+                            print(f"Error clicking or returning from Parties link: {e}")
+                            defendant_details = ""
+                        
+                        # If a PDF file was found, process it for damages
+                        if pdf_files:
+                            most_recent_pdf = max(pdf_files, key=os.path.getctime)
+                            try:
+                                damages_result = process_pdf_and_find_damages(most_recent_pdf)
+                                if damages_result:
+                                    append_to_last_line(self.output_file, f", {damages_result}")
+                            except Exception as ocr_err:
+                                print(f"Error performing OCR on {most_recent_pdf}: {ocr_err}")
+                        else:
+                            print(f"No PDF found in the download directory after waiting up to {timeout_seconds} seconds.")
+                    else:
+                        print("Document was not downloaded successfully.")
+                else:
+                    print(f"Skipping case number: {case_number} (type: {type_desc})")
+                
+                # Mark this case as processed regardless of outcome
+                processed_cases.add(case_number)
+                
+                # Navigate back to the search results page if not already there.
+                # (The details page should have been left already; if not, we force a back.)
+                if "ctl00_ContentPlaceHolder1_ListViewCases_itemContainer" not in self.driver.page_source:
+                    print('Navigating back to search results...')
+                    self.driver.back()
+                    self.wait.until(EC.presence_of_element_located(
+                        (By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')
+                    ))
+            except Exception as e:
+                print(f"Error processing case: {e}")
+                self.driver.execute_script("window.history.go(-1)")
+                self.wait.until(EC.presence_of_element_located(
+                    (By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')
+                ))
+                continue
+            # At this point the loop will refresh the list and process the next unprocessed case.
+ 
 
     def quit(self):
         self.driver.quit()

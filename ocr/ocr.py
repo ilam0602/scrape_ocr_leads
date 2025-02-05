@@ -52,6 +52,7 @@ def extract_damages_with_gemini(text):
         "Analyze the following text and extract the damages the defendant is getting sued for." 
         "There might be multiple sentences that have dollar amounts and describe a general or specific type of damage." 
         "Make sure to find the specific value with the total the Defendant owes."
+        "It usually is not $250,000.00 \n"
         "Since this was extracted using ocr, there might be some extra/missing spaces and characters, "
         "please clean up these mistakes too as best you can in the sentence you are returning"
         "Respond with only the sentence where this is found and "
@@ -69,6 +70,7 @@ def extract_damages_with_gemini(text):
 
     return f'\"{text}\"'
 
+#91% pass rate all wrong answers flagged
 @retry_on_429(max_retries=3, wait_seconds=60)
 def extract_court_names_with_gemini(text):
     # Configure the Gemini API client
@@ -81,12 +83,16 @@ def extract_court_names_with_gemini(text):
 
     # Define the prompt for the Gemini model
     prompt = (
-        "Analyze the following text and extract the court number that is in the format"
-        "County Civil Court at Law No. [court number]. The text is ocr'ed so there might be some missing/additional characters or spaces."
+        "Analyze the following text and extract the court number that is in this format"
+        "\"County Civil Court at Law No. [court number]\" . "
+        "Ignore the exact phrase \"In the County Court At Law No. [number]\", this is not the court number"
+        "The text is ocr'ed so there might be some missing/additional characters or spaces."
+        "If only the ignored phrase is found respond in the same format listed below, but with court number as -1"
         "Grab the first instance where you find the court number. You do not need to read the entire text."
         "Respond in the following format: Harris County - County Civil Court at Law No. [court number] replacing the braces as well"
         f"Text:\n{text}"
     )
+
 
     # Generate a response using the Gemini model
     response = model.generate_content(prompt)
@@ -95,7 +101,6 @@ def extract_court_names_with_gemini(text):
     text = response.text.replace('"', '')
     text = text.replace('\n', ' ')
 
-    # print('text:', text)
     return f'\"{text}\"'
 
 def preprocess_image_to_remove_watermark(image, output_folder, page_number):
@@ -180,7 +185,7 @@ def find_damages_and_value(text):
 
     return "No sentence found where 'damages' is followed by a dollar value."
 
-def process_pdf_and_find_damages(pdf_path):
+def process_pdf_and_find_damages(pdf_path,delete_pdf = True):
     """
     Main function to process the PDF, extract text, and find damages with values.
     By default, removes ALL intermediate and output files, including the original PDF.
@@ -203,9 +208,10 @@ def process_pdf_and_find_damages(pdf_path):
     #     result_file.write(result)
 
     # Cleanup: Remove the original PDF
-    if os.path.exists(pdf_path):
-        os.remove(pdf_path)
-        print(f"Removed the PDF file: {pdf_path}")
+    if delete_pdf:
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
+            print(f"Removed the PDF file: {pdf_path}")
 
     # Cleanup: Remove any processed images folder if created and if it exists
     # (Uncomment the "os.makedirs" in extract_text_from_pdf_with_watermark_removal if you used it)

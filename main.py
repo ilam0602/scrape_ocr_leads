@@ -74,14 +74,18 @@ def convert_txt_to_csv(input_txt_file, output_csv_file):
                 details
             ])
 
+
+
 def verify_csv(input_csv_file, verified_csv_file, filtered_csv_file):
     """
     Reads the CSV file produced by convert_txt_to_csv, examines each row, and appends a new column 'flag'
     as the first column in the output CSV.
     
     A row's flag is set to 1 if:
-      - The DOLLAR_AMOUNT column equals '$250,000.00', OR
-      - The COURT_NAME column does NOT contain a court number between 1 and 4 (inclusive).
+      - The DOLLAR_AMOUNT column is empty, OR
+      - The DOLLAR_AMOUNT column equals '$250,000.00' or '$250,000', OR
+      - The COURT_NAME column does NOT contain a court number between 1 and 4 (inclusive), OR
+      - The first column (from defendant_data.csv) contains 'c/o' (case-insensitive).
         
     Otherwise, the flag is set to 0.
     
@@ -92,7 +96,7 @@ def verify_csv(input_csv_file, verified_csv_file, filtered_csv_file):
         verified_csv_file (str): Path to save the verified CSV file (with all rows).
         filtered_csv_file (str): Path to save the CSV file that only includes rows where flag == 0.
     """
-    # Regex to capture any number from the COURT_NAME.
+    # Regex to capture the court number from the COURT_NAME.
     pattern = re.compile(r'^Harris County - County Civil Court at Law No\. (\d+)$')
     
     with open(input_csv_file, 'r', encoding='utf-8') as infile, \
@@ -112,32 +116,40 @@ def verify_csv(input_csv_file, verified_csv_file, filtered_csv_file):
         for row in reader:
             flag = 0
             
-            # Check if DOLLAR_AMOUNT is exactly '$250,000.00'
-            if row.get('DOLLAR_AMOUNT', '').strip() == '$250,000.00':
+            # Get the DOLLAR_AMOUNT field and strip extra whitespace.
+            dollar_amount = row.get('DOLLAR_AMOUNT', '').strip()
+            # Flag if DOLLAR_AMOUNT is empty or equals '$250,000.00' or '$250,000'
+            if not dollar_amount or dollar_amount in ('$250,000.00', '$250,000','$100,000'):
                 flag = 1
             else:
-                # Retrieve and strip the COURT_NAME
+                # Retrieve and strip the COURT_NAME field.
                 court_name = row.get('COURT_NAME', '').strip()
                 match = pattern.match(court_name)
                 if match:
-                    # Extract the court number and convert it to an integer
+                    # Extract the court number and convert it to an integer.
                     court_number = int(match.group(1))
-                    # Set flag to 1 if the number is NOT between 1 and 4 (i.e., out of range)
+                    # Set flag to 1 if the court number is NOT between 1 and 4 (i.e., out-of-range)
                     if not (1 <= court_number <= 4):
                         flag = 1
                     else:
                         flag = 0
                 else:
-                    # If the COURT_NAME doesn't match the expected pattern, consider it out-of-range
+                    # If the COURT_NAME doesn't match the expected pattern, consider it out-of-range.
                     flag = 1
             
+            # Additional check: if 'c/o' (case-insensitive) is found in the first column, flag the row.
+            first_field = reader.fieldnames[0]
+            first_col_value = row.get(first_field, '').strip()
+            if "c/o" in first_col_value.lower():
+                flag = 1
+            
+            # Add the flag to the row and write to the verified CSV.
             row['flag'] = flag
             verified_writer.writerow(row)
             
-            # Write only rows that are NOT flagged (flag==0) to the filtered CSV
+            # Write only rows that are NOT flagged (flag == 0) to the filtered CSV.
             if flag == 0:
                 filtered_writer.writerow(row)
-
 # Load environment variables from .env file
 load_dotenv()
 
