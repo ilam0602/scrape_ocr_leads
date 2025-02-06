@@ -140,7 +140,7 @@ def verify_csv(input_csv_file, verified_csv_file, filtered_csv_file):
             # Additional check: if 'c/o' (case-insensitive) is found in the first column, flag the row.
             first_field = reader.fieldnames[0]
             first_col_value = row.get(first_field, '').strip()
-            if "c/o" in first_col_value.lower():
+            if "c/o" in first_col_value.lower() or 'inc' in first_col_value.lower() or 'llc' in first_col_value.lower():
                 flag = 1
             
             # Add the flag to the row and write to the verified CSV.

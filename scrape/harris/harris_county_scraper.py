@@ -267,55 +267,90 @@ class HarrisCountyScraper:
                             download_link = download_element.get_attribute('href')
                             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading - {doc_desc} to {self.download_dir}")
                             download_element.click()
-                            time.sleep(2.4)  # Pause for download to initiate
+                            time.sleep(5)  # Pause for download to initiate
                             document_downloaded = True
                             break
 
                     # If no document matched the criteria, choose the largest document by file size
+                    # If no document matched the criteria, choose the document with the most pages instead
                     if not document_downloaded:
-                        print('Document matching criteria not found; attempting to download the largest available document.')
+                        print('document matching criteria not found; attempting to download the document with the most pages.')
                         no_docs_path = '/Users/isaaclam/guardian/marketing_leads_project/main/out/harris/cases_with_no_matching_docs.txt'
                         with open(no_docs_path, 'a', encoding='utf-8') as no_docs_file:
                             doc_titles_str = " | ".join(doc_titles)
                             print(f'Adding case_number: {case_number} to no-match log.')
                             no_docs_file.write(f"{doc_titles_str}, case_number: {case_number}\n")
                         
-                        # Create a requests.Session and add Selenium cookies so that HEAD requests are authenticated
-                        session = requests.Session()
-                        for cookie in self.driver.get_cookies():
-                            session.cookies.set(cookie['name'], cookie['value'])
-                        
-                        largest_size = 0
+                        largest_pages = 0
                         largest_doc = None
+                        # Loop through each document row in the Nested_ChildGrid table
                         for doc in documents:
                             try:
-                                download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
-                                link = download_element.get_attribute('href')
-                                response = session.head(link, allow_redirects=True, timeout=10)
-                                if response.status_code == 200:
-                                    content_length = response.headers.get("Content-Length")
-                                    if content_length is not None:
-                                        size = int(content_length)
-                                        if size > largest_size:
-                                            largest_size = size
-                                            largest_doc = doc
-                                else:
-                                    print(f"HEAD request for {link} returned status code {response.status_code}")
+                                # Assume the page count is in the 5th <td> element of the row.
+                                # Adjust the XPath if your table structure is different.
+                                page_count_td = doc.find_element(By.XPATH, ".//td[5]")
+                                page_count_str = page_count_td.text.strip()
+                                page_count = int(page_count_str) if page_count_str.isdigit() else 0
+                                if page_count > largest_pages:
+                                    largest_pages = page_count
+                                    largest_doc = doc
                             except Exception as e:
-                                print(f"Error processing document for size: {e}")
+                                print(f"Error processing document for page count: {e}")
+                        
+                        if largest_doc is not None:
+                            download_element = largest_doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
+                            download_link = download_element.get_attribute('href')
+                            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading document with {largest_pages} pages to {self.download_dir}")
+                            download_element.click()
+                            time.sleep(5)  # Pause for download to initiate
+                            document_downloaded = True
+                        else:
+                            print("No documents available for download.")
+
+                    # if not document_downloaded:
+                    #     print('Document matching criteria not found; attempting to download the largest available document.')
+                    #     no_docs_path = '/Users/isaaclam/guardian/marketing_leads_project/main/out/harris/cases_with_no_matching_docs.txt'
+                    #     with open(no_docs_path, 'a', encoding='utf-8') as no_docs_file:
+                    #         doc_titles_str = " | ".join(doc_titles)
+                    #         print(f'Adding case_number: {case_number} to no-match log.')
+                    #         no_docs_file.write(f"{doc_titles_str}, case_number: {case_number}\n")
+                        
+                    #     # Create a requests.Session and add Selenium cookies so that HEAD requests are authenticated
+                    #     session = requests.Session()
+                    #     for cookie in self.driver.get_cookies():
+                    #         session.cookies.set(cookie['name'], cookie['value'])
+                        
+                    #     largest_size = 0
+                    #     largest_doc = None
+                    #     for doc in documents:
+                    #         try:
+                    #             download_element = doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
+                    #             link = download_element.get_attribute('href')
+                    #             response = session.head(link, allow_redirects=True, timeout=10)
+                    #             if response.status_code == 200:
+                    #                 content_length = response.headers.get("Content-Length")
+                    #                 if content_length is not None:
+                    #                     size = int(content_length)
+                    #                     if size > largest_size:
+                    #                         largest_size = size
+                    #                         largest_doc = doc
+                    #             else:
+                    #                 print(f"HEAD request for {link} returned status code {response.status_code}")
+                    #         except Exception as e:
+                    #             print(f"Error processing document for size: {e}")
                         if largest_doc is not None:
                             download_element = largest_doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
                             download_link = download_element.get_attribute('href')
                             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading largest document (size: {largest_size} bytes) to {self.download_dir}")
                             download_element.click()
-                            time.sleep(2.4)  # Pause for download
+                            time.sleep(5)  # Pause for download
                             document_downloaded = True
                         else:
                             print("No documents available for download.")
 
                     # After downloading, wait for the PDF to appear
                     if document_downloaded and download_link:
-                        time.sleep(2)
+                        time.sleep(5)
                         start_time = time.time()
                         pdf_files = glob.glob(os.path.join(self.download_dir, "*.pdf"))
                         while not pdf_files and (time.time() - start_time < self.download_wait_timeout):
