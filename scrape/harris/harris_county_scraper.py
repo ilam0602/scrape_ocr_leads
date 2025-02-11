@@ -6,7 +6,8 @@ import shutil
 import requests
 from datetime import datetime, timedelta
 
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -212,23 +213,29 @@ class HarrisCountyScraper:
                     case_number = "unknown_case_number"
                 if case_number not in processed_cases:
                     unprocessed_cases.append((case, case_number))
-            
             if not unprocessed_cases:
-                # No unprocessed cases on the current page; check for a Next button
+        # No unprocessed cases on the current page; check for a Next button
                 try:
                     next_button = self.driver.find_element(By.XPATH, "//a[text()='Next']")
                     if next_button.get_attribute('disabled') is None:
-                        next_button.click()
+                        try:
+                            next_button.click()
+                        except ElementClickInterceptedException as e:
+                            print(f"ElementClickInterceptedException encountered: {e}. Continuing to next iteration.")
+                            # Optionally, you can add a small wait here if needed:
+                            # time.sleep(1)
+                            continue  # Skip this iteration if click is intercepted
+                        # Wait until the next page's element is present
                         self.wait.until(EC.presence_of_element_located(
                             (By.ID, 'ctl00_ContentPlaceHolder1_ListViewCases_itemContainer')
                         ))
-                        continue
+                        continue  # Continue processing the new page
                     else:
                         print("Reached the last page.")
                         break
                 except NoSuchElementException:
                     print("No 'Next' button found. Assuming last page reached.")
-                    break
+                    break # No 'Next' button found; assume last page reached
 
             # Always process the first unprocessed case
             case, case_number = unprocessed_cases[0]
@@ -338,15 +345,15 @@ class HarrisCountyScraper:
                     #                 print(f"HEAD request for {link} returned status code {response.status_code}")
                     #         except Exception as e:
                     #             print(f"Error processing document for size: {e}")
-                        if largest_doc is not None:
-                            download_element = largest_doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
-                            download_link = download_element.get_attribute('href')
-                            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading largest document (size: {largest_size} bytes) to {self.download_dir}")
-                            download_element.click()
-                            time.sleep(5)  # Pause for download
-                            document_downloaded = True
-                        else:
-                            print("No documents available for download.")
+                        # if largest_doc is not None:
+                        #     download_element = largest_doc.find_element(By.XPATH, ".//a[contains(@id, 'HyperLinkFCEC')]")
+                        #     download_link = download_element.get_attribute('href')
+                        #     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Downloading largest document (size: {largest_size} bytes) to {self.download_dir}")
+                        #     download_element.click()
+                        #     time.sleep(5)  # Pause for download
+                        #     document_downloaded = True
+                        # else:
+                        #     print("No documents available for download.")
 
                     # After downloading, wait for the PDF to appear
                     if document_downloaded and download_link:
